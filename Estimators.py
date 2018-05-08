@@ -51,7 +51,7 @@ class CME(Estimator):
         self.numFeatures = self.loggingPolicy.dataset.features[0].shape[1]
         self.kernel = rbf_kernel
         self.kernel_param = 1.0
-        self.reg_param = 0.1
+        self.reg_param = 0.001
 
         self.hyperParams = {'alpha': (numpy.logspace(-2, 1, num=4, base=10)).tolist()}
 
@@ -104,18 +104,24 @@ class CME(Estimator):
 
         random_indices = numpy.arange(0, target_covariates.shape[0])  # array of all indices
         numpy.random.shuffle(random_indices)  # shuffle the array
+
+        sample_null_covar = null_covariates[
+            random_indices[:int(len(random_indices) * 0.1)]]  # get N samples without replacement
+
+        numpy.random.shuffle(random_indices) # shuffle the array
         sample_target_covar = target_covariates[
             random_indices[:int(len(random_indices) * 0.1)]]  # get N samples without replacement
 
-        recom_param = (0.5 * self.kernel_param) / numpy.median(pdist(sample_target_covar, 'sqeuclidean'))
+
+        recom_param = (0.5 * self.kernel_param) / numpy.median(pdist(numpy.vstack([sample_null_covar, sample_target_covar]), 'sqeuclidean'))
 
         print("Computing kernel matrix", flush=True)
         # nystroem = Nystroem(gamma=recom_param)
 
         # nullRecomMatrix = nystroem.fit_transform(null_covariates)
         # targetRecomMatrix = nystroem.transform(target_covariates)
-        nullRecomMatrix = self.kernel(null_covariates, null_covariates, recom_param*10e-2)
-        targetRecomMatrix = self.kernel(null_covariates, target_covariates, recom_param*10e-2)
+        nullRecomMatrix = self.kernel(null_covariates, null_covariates, recom_param)
+        targetRecomMatrix = self.kernel(null_covariates, target_covariates, recom_param)
 
         m = null_covariates.shape[0]
         n = target_covariates.shape[0]
@@ -126,7 +132,7 @@ class CME(Estimator):
         A = nullRecomMatrix + numpy.diag(numpy.repeat(n * reg_params, n))
 
         print("Finding beta_vec", flush=True)
-        beta_vec, _ = scipy.sparse.linalg.cg(A, b, tol=1e-07, maxiter=5000)
+        beta_vec, _ = scipy.sparse.linalg.cg(A, b, tol=1e-06, maxiter=1000)
 
         return numpy.dot(beta_vec, targets) / beta_vec.sum()
 
