@@ -1,7 +1,7 @@
 import sys
 
 
-DATA_DIR="D:\\Datasets\\"
+DATA_DIR="/Volumes/Data/workdata/cme/"
 
 def get_feature_sets(datasetName):
     anchorURL = [0]

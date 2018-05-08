@@ -5,8 +5,9 @@ import scipy.sparse
 import sklearn.model_selection
 import sklearn.tree
 import sklearn.linear_model
-from sklearn.metrics.pairwise import rbf_kernel, linear_kernel
-
+from sklearn.metrics.pairwise import rbf_kernel
+from scipy.spatial.distance import pdist
+from sklearn.kernel_approximation import Nystroem
 
 class Estimator:
     # ranking_size: (int) Size of slate, l
@@ -41,6 +42,93 @@ class Estimator:
     def reset(self):
         self.runningSum = 0
         self.runningMean = 0.0
+
+
+class CME(Estimator):
+    def __init__(self, ranking_size, logging_policy, target_policy):
+        Estimator.__init__(self, ranking_size, logging_policy, target_policy)
+        self.name = 'CME'
+        self.numFeatures = self.loggingPolicy.dataset.features[0].shape[1]
+        self.kernel = rbf_kernel
+        self.kernel_param = 1.0
+        self.reg_param = 0.1
+
+        self.hyperParams = {'alpha': (numpy.logspace(-2, 1, num=4, base=10)).tolist()}
+
+    def estimateAll(self, loggedData):
+        numInstances = len(loggedData)
+        targets = numpy.zeros(numInstances, order='C', dtype=numpy.float64)
+        null_covariates = scipy.sparse.lil_matrix((numInstances, self.numFeatures * self.rankingSize),
+                                                  dtype=numpy.float64)
+        target_covariates = scipy.sparse.lil_matrix((numInstances, self.numFeatures * self.rankingSize),
+                                                    dtype=numpy.float64)
+        print("Starting to create covariates", flush=True)
+        for j in range(numInstances):
+            currentDatapoint = loggedData.pop()
+            targets[j] = currentDatapoint[2]
+
+            currentQuery = currentDatapoint[0]
+            currentRanking = currentDatapoint[1]
+
+            newRanking = self.targetPolicy.predict(currentQuery, self.rankingSize)
+
+            nullFeatures = self.loggingPolicy.dataset.features[currentQuery][currentRanking, :]
+            nullFeatures.eliminate_zeros()
+
+            targetFeatures = self.loggingPolicy.dataset.features[currentQuery][newRanking, :]
+            targetFeatures.eliminate_zeros()
+
+            null_covariates.data[j] = nullFeatures.data
+            target_covariates.data[j] = targetFeatures.data
+            nullIndices = nullFeatures.indices
+            targetIndices = targetFeatures.indices
+            for k in range(nullFeatures.shape[0]):
+                nullIndices[nullFeatures.indptr[k]:nullFeatures.indptr[k + 1]] += k * self.numFeatures
+                targetIndices[targetFeatures.indptr[k]:targetFeatures.indptr[k + 1]] += k * self.numFeatures
+
+            null_covariates.rows[j] = nullIndices
+            target_covariates.rows[j] = targetIndices
+
+            if j % 1000 == 0:
+                print(".", end='', flush=True)
+            del currentDatapoint
+            del nullFeatures
+            del targetFeatures
+
+        print("Converting covariates", flush=True)
+        null_covariates = null_covariates.toarray()
+        target_covariates = target_covariates.toarray()
+        print("Finished conversion", flush=True)
+
+        print("Calculating heuristic kernel param", flush=True)
+
+        random_indices = numpy.arange(0, target_covariates.shape[0])  # array of all indices
+        numpy.random.shuffle(random_indices)  # shuffle the array
+        sample_target_covar = target_covariates[
+            random_indices[:int(len(random_indices) * 0.1)]]  # get N samples without replacement
+
+        recom_param = (0.5 * self.kernel_param) / numpy.median(pdist(sample_target_covar, 'sqeuclidean'))
+
+        print("Computing kernel matrix", flush=True)
+        # nystroem = Nystroem(gamma=recom_param)
+
+        # nullRecomMatrix = nystroem.fit_transform(null_covariates)
+        # targetRecomMatrix = nystroem.transform(target_covariates)
+        nullRecomMatrix = self.kernel(null_covariates, null_covariates, recom_param*10e-2)
+        targetRecomMatrix = self.kernel(null_covariates, target_covariates, recom_param*10e-2)
+
+        m = null_covariates.shape[0]
+        n = target_covariates.shape[0]
+
+        reg_params = self.reg_param / m
+
+        b = numpy.dot(targetRecomMatrix, numpy.repeat(1.0 / m, m, axis=0))
+        A = nullRecomMatrix + numpy.diag(numpy.repeat(n * reg_params, n))
+
+        print("Finding beta_vec", flush=True)
+        beta_vec, _ = scipy.sparse.linalg.cg(A, b, tol=1e-07, maxiter=5000)
+
+        return numpy.dot(beta_vec, targets) / beta_vec.sum()
 
 
 class OnPolicy(Estimator):
@@ -536,73 +624,3 @@ class Direct(Estimator):
             self.tree = None
         else:
             self.policyParams = None
-
-
-class CME(Estimator):
-    def __init__(self, ranking_size, logging_policy, target_policy):
-        Estimator.__init__(self, ranking_size, logging_policy, target_policy)
-        self.name = 'CME'
-        self.numFeatures = self.loggingPolicy.dataset.features[0].shape[1]
-        self.kernel = rbf_kernel
-        self.kernel_param = 1.0
-        self.reg_param = 1.0
-
-        # self.hyperParams = {'alpha': (numpy.logspace(-2, 1, num=4, base=10)).tolist()}
-
-    def estimateAll(self, logged_data):
-        numInstances = len(logged_data)
-        targets = numpy.zeros(numInstances, order='C', dtype=numpy.float64)
-        null_covariates = scipy.sparse.lil_matrix((numInstances, self.numFeatures * self.rankingSize),
-                                                  dtype=numpy.float64)
-        target_covariates = scipy.sparse.lil_matrix((numInstances, self.numFeatures * self.rankingSize),
-                                                    dtype=numpy.float64)
-        print("Starting to create covariates", flush=True)
-        for j in range(numInstances):
-            currentDatapoint = logged_data.pop()
-            targets[j] = currentDatapoint[2]
-
-            currentQuery = currentDatapoint[0]
-            currentRanking = currentDatapoint[1]
-
-            newRanking = self.targetPolicy.predict(currentQuery, self.rankingSize)
-
-            nullFeatures = self.loggingPolicy.dataset.features[currentQuery][currentRanking, :]
-            nullFeatures.eliminate_zeros()
-
-            targetFeatures = self.loggingPolicy.dataset.features[currentQuery][newRanking, :]
-            targetFeatures.eliminate_zeros()
-
-            null_covariates.data[j] = nullFeatures.data
-            target_covariates.data[j] = targetFeatures.data
-            nullIndices = nullFeatures.indices
-            targetIndices = targetFeatures.indices
-            for k in range(nullFeatures.shape[0]):
-                nullIndices[nullFeatures.indptr[k]:nullFeatures.indptr[k + 1]] += k * self.numFeatures
-                targetIndices[targetFeatures.indptr[k]:targetFeatures.indptr[k + 1]] += k * self.numFeatures
-
-            null_covariates.rows[j] = nullIndices
-            target_covariates.rows[j] = targetIndices
-
-            if j % 1000 == 0:
-                print(".", end='', flush=True)
-            del currentDatapoint
-            del nullFeatures
-            del targetFeatures
-
-        print("Converting covariates", flush=True)
-        null_covariates = null_covariates.tocsr()
-        target_covariates = target_covariates.tocsr()
-        print("Finished conversion", flush=True)
-
-        nullRecomMatrix = self.kernel(null_covariates, null_covariates, self.kernel_param)  #
-        targetRecomMatrix = self.kernel(null_covariates, target_covariates, self.kernel_param)
-
-        m = null_covariates.shape[0]
-        n = target_covariates.shape[0]
-
-        b = numpy.dot(targetRecomMatrix, numpy.repeat(1.0 / m, m, axis=0))
-        A = nullRecomMatrix + numpy.diag(numpy.repeat(n * self.reg_param, n))
-
-        beta_vec, _ = scipy.sparse.linalg.cg(A, b, tol=1e-06, maxiter=1000)
-
-        return numpy.dot(beta_vec, targets)

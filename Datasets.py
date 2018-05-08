@@ -200,7 +200,7 @@ if __name__=="__main__":
     for foldID in range(1,6):
         for fraction in ['train','vali','test']:
             mslrData=Datasets()
-            mslrData.loadTxt(Settings.DATA_DIR+'MSLR-WEB10K\\Fold'+str(foldID)+'\\'+fraction+'.txt', 'MSLR10k-'+str(foldID)+'-'+fraction)
+            mslrData.loadTxt(Settings.DATA_DIR+'MSLR-WEB10K/Fold'+str(foldID)+'/'+fraction+'.txt', 'MSLR10k-'+str(foldID)+'-'+fraction)
             del mslrData
     
     mslrData=Datasets()
@@ -210,6 +210,6 @@ if __name__=="__main__":
     for foldID in range(1,6):
         for fraction in ['train','vali','test']:
             mslrData=Datasets()
-            mslrData.loadTxt(Settings.DATA_DIR+'MSLR\\Fold'+str(foldID)+'\\'+fraction+'.txt', 'MSLR-'+str(foldID)+'-'+fraction)
+            mslrData.loadTxt(Settings.DATA_DIR+'MSLR/Fold'+str(foldID)+'/'+fraction+'.txt', 'MSLR-'+str(foldID)+'-'+fraction)
             del mslrData
     
