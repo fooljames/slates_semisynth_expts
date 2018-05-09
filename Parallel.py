@@ -18,15 +18,15 @@ if __name__ == "__main__":
     parser.add_argument('--replacement', '-r', metavar='R', type=bool, help='Sampling with or without replacement',
                         default=False)
     parser.add_argument('--temperature', '-t', metavar='T', type=float, help='Temperature for logging policy',
-                        default=1.0)  # Use 0 < temperature < 2 to have reasonable tails for logger [-t 2 => smallest prob is 10^-4 (Uniform is 10^-2)]
+                        default=2.0)  # Use 0 < temperature < 2 to have reasonable tails for logger [-t 2 => smallest prob is 10^-4 (Uniform is 10^-2)]
     parser.add_argument('--logging_ranker', '-f', metavar='F', type=str, help='Model for logging ranker',
                         default="tree", choices=["tree", "lasso"])
     parser.add_argument('--evaluation_ranker', '-e', metavar='E', type=str, help='Model for evaluation ranker',
-                        default="tree", choices=["tree", "lasso"])
+                        default="lasso", choices=["tree", "lasso"])
     parser.add_argument('--dataset', '-d', metavar='D', type=str, help='Which dataset to use',
                         default="MSLR", choices=["MSLR", "MSLR10k", "MQ2008", "MQ2007"])
     parser.add_argument('--value_metric', '-v', metavar='V', type=str, help='Which metric to evaluate',
-                        default="NDCG", choices=["NDCG", "ERR", "MaxRel", "SumRel"])
+                        default="ERR", choices=["NDCG", "ERR", "MaxRel", "SumRel"])
     parser.add_argument('--numpy_seed', '-n', metavar='N', type=int,
                         help='Seed for numpy.random', default=387)
     parser.add_argument('--output_dir', '-o', metavar='O', type=str,
@@ -36,7 +36,7 @@ if __name__ == "__main__":
                         choices=["OnPolicy", "IPS", "IPS_SN", "PI", "PI_SN", "DM_tree", "DM_lasso", "DMc_lasso",
                                  "DM_ridge", "DMc_ridge", "CME"])
     parser.add_argument('--logSize', '-s', metavar='S', type=int,
-                        help='Size of log', default=20000)
+                        help='Size of log', default=30000)
     parser.add_argument('--trainingSize', '-z', metavar='Z', type=int,
                         help='Size of training data for direct estimators', default=10000)
     parser.add_argument('--saveSize', '-u', metavar='U', type=int,
@@ -208,10 +208,7 @@ if __name__ == "__main__":
         currentSaveIndex = 0
         currentSaveValue = saveValues[currentSaveIndex] - 1
 
-        loggedData = None
-        if args.trainingSize > 0:
-            loggedData = []
-
+        loggedData = []
         for j in range(args.logSize):
             currentQuery = numpy.random.randint(0, numQueries)
             loggedRanking = loggingPolicy.predict(currentQuery, args.length_ranking)
@@ -219,27 +216,34 @@ if __name__ == "__main__":
 
             newRanking = targetPolicy.predict(currentQuery, args.length_ranking)
 
-            estimatedValue = None
-            if (args.trainingSize > 0 and j < args.trainingSize):
-                estimatedValue = 0.0
-                loggedData.append((currentQuery, loggedRanking, loggedValue))
-            else:
-                if j == args.trainingSize:
-                    try:
-                        estimator.train(loggedData)
-                        if args.approach.startswith("DMc"):
-                            estimator.estimateAll(metric=metric)
-                        else:
-                            estimator.estimateAll()
-                    except AttributeError:
-                        pass
-                if not args.approach == "CME":
-                    estimatedValue = estimator.estimate(currentQuery, loggedRanking, newRanking, loggedValue)
+            estimatedValue = 0.0
+            loggedData.append((currentQuery, loggedRanking, loggedValue, newRanking))
+
+            # else:
+            #     if j == args.trainingSize:
+            #         try:
+            #             estimator.train(loggedData)
+            #             if args.approach.startswith("DMc"):
+            #                 estimator.estimateAll(metric=metric)
+            #             else:
+            #                 estimator.estimateAll()
+            #         except AttributeError:
+            #             pass
+
+            if not (args.approach == "CME" or args.approach.startswith("DM")):
+                estimatedValue = estimator.estimate(currentQuery, loggedRanking, newRanking, loggedValue)
 
             if j == currentSaveValue:
+                if args.approach.startswith("DM"):
+                    estimator.train(loggedData)
+                    if args.approach.startswith("DMc"):
+                        estimator.estimateAll(metric=metric)
+                    else:
+                        estimator.estimateAll()
+                    estimatedValue = numpy.mean([estimator.estimate(cq, lr, lv, nr) for cq, lr, lv, nr in loggedData])
+
                 if args.approach == "CME":
-                    loggedDataCME = loggedData.copy()
-                    estimatedValue = estimator.estimateAll(loggedDataCME)
+                    estimatedValue = estimator.estimateAll(loggedData)
                 savePreds[currentSaveIndex] = estimatedValue
                 saveMSEs[currentSaveIndex] = (estimatedValue - target) ** 2
                 currentSaveIndex += 1

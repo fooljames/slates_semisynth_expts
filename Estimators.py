@@ -64,13 +64,13 @@ class CME(Estimator):
                                                     dtype=numpy.float64)
         print("Starting to create covariates", flush=True)
         for j in range(numInstances):
-            currentDatapoint = loggedData.pop()
+            currentDatapoint = loggedData[j]
+
             targets[j] = currentDatapoint[2]
 
             currentQuery = currentDatapoint[0]
             currentRanking = currentDatapoint[1]
-
-            newRanking = self.targetPolicy.predict(currentQuery, self.rankingSize)
+            newRanking = currentDatapoint[3]
 
             nullFeatures = self.loggingPolicy.dataset.features[currentQuery][currentRanking, :]
             nullFeatures.eliminate_zeros()
@@ -108,7 +108,6 @@ class CME(Estimator):
         sample_null_covar = null_covariates[
             random_indices[:int(len(random_indices) * 0.1)]]  # get N samples without replacement
 
-        numpy.random.shuffle(random_indices) # shuffle the array
         sample_target_covar = target_covariates[
             random_indices[:int(len(random_indices) * 0.1)]]  # get N samples without replacement
 
@@ -126,13 +125,13 @@ class CME(Estimator):
         m = null_covariates.shape[0]
         n = target_covariates.shape[0]
 
-        reg_params = self.reg_param / m
+        reg_params = self.reg_param / n
 
         b = numpy.dot(targetRecomMatrix, numpy.repeat(1.0 / m, m, axis=0))
         A = nullRecomMatrix + numpy.diag(numpy.repeat(n * reg_params, n))
 
         print("Finding beta_vec", flush=True)
-        beta_vec, _ = scipy.sparse.linalg.cg(A, b, tol=1e-06, maxiter=1000)
+        beta_vec, _ = scipy.sparse.linalg.cg(A, b, tol=1e-08, maxiter=5000)
 
         return numpy.dot(beta_vec, targets) / beta_vec.sum()
 
@@ -525,7 +524,7 @@ class Direct(Estimator):
         covariates = scipy.sparse.lil_matrix((numInstances, self.numFeatures * self.rankingSize), dtype=numpy.float64)
         print("Starting to create covariates", flush=True)
         for j in range(numInstances):
-            currentDatapoint = logged_data.pop()
+            currentDatapoint = logged_data[j]
             targets[j] = currentDatapoint[2]
 
             currentQuery = currentDatapoint[0]
