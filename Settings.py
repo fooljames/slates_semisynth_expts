@@ -6,6 +6,7 @@ if os.getcwd().startswith('/Users/ssaengkyong'):
 else:
     DATA_DIR = "/home/user/cme_data/"
 
+OUTPUT_DIR = os.path.join(DATA_DIR, 'output')
 
 def get_feature_sets(datasetName):
     anchorURL = [0]
