@@ -2,11 +2,12 @@ import sys
 import os
 
 if os.getcwd().startswith('/Users/ssaengkyong'):
-    DATA_DIR = "/Volumes/Data/workdata/cme/"
+    DATA_DIR = "/Volumes/Data/workdata/cme_data/"
 else:
     DATA_DIR = "/home/user/cme_data/"
 
 OUTPUT_DIR = os.path.join(DATA_DIR, 'output')
+
 
 def get_feature_sets(datasetName):
     anchorURL = [0]

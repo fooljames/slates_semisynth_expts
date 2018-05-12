@@ -9,6 +9,7 @@ from sklearn.metrics.pairwise import rbf_kernel
 from scipy.spatial.distance import pdist
 from sklearn.kernel_approximation import Nystroem
 
+
 class Estimator:
     # ranking_size: (int) Size of slate, l
     # logging_policy: (UniformPolicy) Logging policy, \mu
@@ -45,13 +46,17 @@ class Estimator:
 
 
 class CME(Estimator):
-    def __init__(self, ranking_size, logging_policy, target_policy):
+    def __init__(self, ranking_size, logging_policy, target_policy, approx=False):
         Estimator.__init__(self, ranking_size, logging_policy, target_policy)
-        self.name = 'CME'
+        if approx:
+            self.name = 'CME_A'
+        else:
+            self.name = 'CME'
         self.numFeatures = self.loggingPolicy.dataset.features[0].shape[1]
         self.kernel = rbf_kernel
         self.kernel_param = 1.0
         self.reg_param = 0.001
+        self.approx = approx
 
         self.hyperParams = {'alpha': (numpy.logspace(-2, 1, num=4, base=10)).tolist()}
 
@@ -98,34 +103,48 @@ class CME(Estimator):
         print("Converting covariates", flush=True)
         null_covariates = null_covariates.toarray()
         target_covariates = target_covariates.toarray()
+
+        scaler = sklearn.preprocessing.StandardScaler()
+        scaler.fit(null_covariates)
+
+        s_null_covariates = scaler.transform(null_covariates)
+        s_target_covariates = scaler.transform(target_covariates)
         print("Finished conversion", flush=True)
 
         print("Calculating heuristic kernel param", flush=True)
 
-        random_indices = numpy.arange(0, target_covariates.shape[0])  # array of all indices
+        random_indices = numpy.arange(0, s_null_covariates.shape[0])  # array of all indices
         numpy.random.shuffle(random_indices)  # shuffle the array
 
-        sample_null_covar = null_covariates[
-            random_indices[:int(len(random_indices) * 0.1)]]  # get N samples without replacement
+        sample_null_covar = s_null_covariates[random_indices[:1000]]  # get N samples without replacement
 
-        sample_target_covar = target_covariates[
-            random_indices[:int(len(random_indices) * 0.1)]]  # get N samples without replacement
+        sample_target_covar = s_target_covariates[random_indices[:1000]]  # get N samples without replacement
 
-
-        recom_param = (0.5 * self.kernel_param) / numpy.median(pdist(numpy.vstack([sample_null_covar, sample_target_covar]), 'sqeuclidean'))
+        recom_param = (0.5 * self.kernel_param) / numpy.median(
+            pdist(numpy.vstack([sample_null_covar, sample_target_covar]), 'sqeuclidean'))
 
         print("Computing kernel matrix", flush=True)
-        # nystroem = Nystroem(gamma=recom_param)
-
-        # nullRecomMatrix = nystroem.fit_transform(null_covariates)
-        # targetRecomMatrix = nystroem.transform(target_covariates)
-        nullRecomMatrix = self.kernel(null_covariates, null_covariates, recom_param)
-        targetRecomMatrix = self.kernel(null_covariates, target_covariates, recom_param)
 
         m = null_covariates.shape[0]
         n = target_covariates.shape[0]
-
         reg_params = self.reg_param / n
+
+        if self.approx:
+            p = int(numpy.sqrt(n))
+            nystroem = Nystroem(gamma=recom_param, n_components=p)
+            nystroem.fit(s_null_covariates)
+
+            nullPhi = nystroem.transform(s_null_covariates)
+            targetPhi = nystroem.transform(s_target_covariates)
+
+            b = numpy.dot(targetPhi.T, numpy.repeat(1.0 / m, m, axis=0))
+            A = nullPhi.T.dot(nullPhi) + numpy.diag(numpy.repeat(p * reg_params, p))
+            beta_vec_approx = nullPhi.dot(scipy.sparse.linalg.cg(A, b, tol=1e-08, maxiter=5000)[0])
+
+            return numpy.dot(beta_vec_approx, targets) / beta_vec_approx.sum()
+
+        nullRecomMatrix = self.kernel(s_null_covariates, s_null_covariates, recom_param)
+        targetRecomMatrix = self.kernel(s_null_covariates, s_target_covariates, recom_param)
 
         b = numpy.dot(targetRecomMatrix, numpy.repeat(1.0 / m, m, axis=0))
         A = nullRecomMatrix + numpy.diag(numpy.repeat(n * reg_params, n))

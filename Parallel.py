@@ -20,7 +20,7 @@ if __name__ == "__main__":
     parser.add_argument('--replacement', '-r', metavar='R', type=bool, help='Sampling with or without replacement',
                         default=False)
     parser.add_argument('--temperature', '-t', metavar='T', type=float, help='Temperature for logging policy',
-                        default=2.0)  # Use 0 < temperature < 2 to have reasonable tails for logger [-t 2 => smallest prob is 10^-4 (Uniform is 10^-2)]
+                        default=0.0)  # Use 0 < temperature < 2 to have reasonable tails for logger [-t 2 => smallest prob is 10^-4 (Uniform is 10^-2)]
     parser.add_argument('--logging_ranker', '-f', metavar='F', type=str, help='Model for logging ranker',
                         default="tree", choices=["tree", "lasso"])
     parser.add_argument('--evaluation_ranker', '-e', metavar='E', type=str, help='Model for evaluation ranker',
@@ -28,17 +28,17 @@ if __name__ == "__main__":
     parser.add_argument('--dataset', '-d', metavar='D', type=str, help='Which dataset to use',
                         default="MSLR", choices=["MSLR", "MSLR10k", "MQ2008", "MQ2007"])
     parser.add_argument('--value_metric', '-v', metavar='V', type=str, help='Which metric to evaluate',
-                        default="NDCG", choices=["NDCG", "ERR", "MaxRel", "SumRel"])
+                        default="ERR", choices=["NDCG", "ERR", "MaxRel", "SumRel"])
     parser.add_argument('--numpy_seed', '-n', metavar='N', type=int,
                         help='Seed for numpy.random', default=387)
     parser.add_argument('--output_dir', '-o', metavar='O', type=str,
                         help='Directory to store pkls', default=Settings.DATA_DIR)
     parser.add_argument('--approach', '-a', metavar='A', type=str,
-                        help='Approach name', default='DM_tree',
+                        help='Approach name', default='CME',
                         choices=["OnPolicy", "IPS", "IPS_SN", "PI", "PI_SN", "DM_tree", "DM_lasso", "DMc_lasso",
                                  "DM_ridge", "DMc_ridge", "CME"])
     parser.add_argument('--logSize', '-s', metavar='S', type=int,
-                        help='Size of log', default=30000)
+                        help='Size of log', default=10000)
     parser.add_argument('--trainingSize', '-z', metavar='Z', type=int,
                         help='Size of training data for direct estimators', default=10000)
     parser.add_argument('--saveSize', '-u', metavar='U', type=int,
@@ -157,7 +157,8 @@ if __name__ == "__main__":
         estimator = Estimators.Direct(args.length_ranking, loggingPolicy, targetPolicy, estimatorType)
     elif args.approach == "CME":
         estimator = Estimators.CME(args.length_ranking, loggingPolicy, targetPolicy)
-        args.trainingSize = args.logSize
+    elif args.approach == "CME_A":
+        estimator = Estimators.CME(args.length_ranking, loggingPolicy, targetPolicy, approx=True)
     else:
         print("Parallel:main [ERR] Estimator %s not supported." % args.approach, flush=True)
         sys.exit(0)
