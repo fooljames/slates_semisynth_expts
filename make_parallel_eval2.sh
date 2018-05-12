@@ -5,7 +5,7 @@ L=10
 
 for metric in ERR NDCG
 do
-    for temp in 0.0 0.5 1.0 1.5
+    for temp in 0.0 0.5 1.0 1.5 2.0
     do
         for eval in tree
         do
