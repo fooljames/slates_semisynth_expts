@@ -1,18 +1,21 @@
 #!/bin/bash
 
-M=100
-L=10
+M=10
+L=5
 
-for metric in NDCG
+for logger in lasso
 do
-    for temp in 0.0 0.5 1.0 1.5 2.0
+    for metric in NDCG
     do
-        for eval in tree
+        for temp in 1.0
         do
-            for approach in OnPolicy
+            for eval in tree
             do
-                python3 Parallel.py -m ${M} -l ${L} -v ${metric} -e ${eval} -t ${temp} -a ${approach} --start 0 --stop 10 &> eval.log.${metric}.${M}.${L}.${temp}.${eval}.${approach} &
+                for approach in OnPolicy
+                do
+                    python3 Parallel.py -m ${M} -l ${L} -v ${metric} -f ${logger} -e ${eval} -t ${temp} -a ${approach} -s 100000 -u 8 --start 0 --stop 10 &> eval.log.${metric}.${M}.${L}.${logger}-${temp}.${eval}.${approach} &
+                done
             done
-	    done
+        done
     done
 done

@@ -14,15 +14,15 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description='Synthetic Testbed Experiments.')
     parser.add_argument('--max_docs', '-m', metavar='M', type=int, help='Filter documents',
-                        default=100)
-    parser.add_argument('--length_ranking', '-l', metavar='L', type=int, help='Ranking Size',
                         default=10)
+    parser.add_argument('--length_ranking', '-l', metavar='L', type=int, help='Ranking Size',
+                        default=5)
     parser.add_argument('--replacement', '-r', metavar='R', type=bool, help='Sampling with or without replacement',
                         default=False)
     parser.add_argument('--temperature', '-t', metavar='T', type=float, help='Temperature for logging policy',
-                        default=0.0)  # Use 0 < temperature < 2 to have reasonable tails for logger [-t 2 => smallest prob is 10^-4 (Uniform is 10^-2)]
+                        default=1.0)  # Use 0 < temperature < 2 to have reasonable tails for logger [-t 2 => smallest prob is 10^-4 (Uniform is 10^-2)]
     parser.add_argument('--logging_ranker', '-f', metavar='F', type=str, help='Model for logging ranker',
-                        default="tree", choices=["tree", "lasso"])
+                        default="lasso", choices=["tree", "lasso"])
     parser.add_argument('--evaluation_ranker', '-e', metavar='E', type=str, help='Model for evaluation ranker',
                         default="tree", choices=["tree", "lasso"])
     parser.add_argument('--dataset', '-d', metavar='D', type=str, help='Which dataset to use',
@@ -36,7 +36,7 @@ if __name__ == "__main__":
     parser.add_argument('--approach', '-a', metavar='A', type=str,
                         help='Approach name', default='CME',
                         choices=["OnPolicy", "IPS", "IPS_SN", "PI", "PI_SN", "DM_tree", "DM_lasso", "DMc_lasso",
-                                 "DM_ridge", "DMc_ridge", "CME"])
+                                 "DM_ridge", "DMc_ridge", "CME", "CME_A"])
     parser.add_argument('--logSize', '-s', metavar='S', type=int,
                         help='Size of log', default=10000)
     parser.add_argument('--trainingSize', '-z', metavar='Z', type=int,
@@ -175,8 +175,7 @@ if __name__ == "__main__":
     print("Parallel:main [LOG] *** TARGET: ", target, flush=True)
     del trueMetric
 
-    saveValues = numpy.linspace(start=int(args.logSize / args.saveSize), stop=args.logSize, num=args.saveSize,
-                                endpoint=True, dtype=numpy.int)
+    saveValues = numpy.round(numpy.exp(numpy.linspace(start=numpy.log(1e3), stop=numpy.log(args.logSize), num=args.saveSize))).astype(numpy.int32)
 
     outputString = args.output_dir + 'ssynth_' + args.value_metric + '_' + args.dataset + '_'
     if args.max_docs is None:
@@ -191,9 +190,9 @@ if __name__ == "__main__":
         outputString += 'n'
     outputString += str(float(args.temperature)) + '_'
     outputString += 'f' + args.logging_ranker + '_e' + args.evaluation_ranker + '_' + str(args.numpy_seed)
-    outputString += '_' + args.approach
-    if args.approach.startswith("DM"):
-        outputString += '_' + str(args.trainingSize)
+    outputString += '_' + args.approach.replace("_", "-")
+    # if args.approach.startswith("DM"):
+    #     outputString += '_' + str(args.trainingSize)
 
     for iteration in range(args.start, args.stop):
 
@@ -235,19 +234,22 @@ if __name__ == "__main__":
             #         except AttributeError:
             #             pass
 
-            if not (args.approach == "CME" or args.approach.startswith("DM")):
+            if not (args.approach.startswith("CME") or args.approach.startswith("DM")):
                 estimatedValue = estimator.estimate(currentQuery, loggedRanking, newRanking, loggedValue)
 
             if j == currentSaveValue:
                 if args.approach.startswith("DM"):
+                    estimator.reset()
                     estimator.train(loggedData)
                     if args.approach.startswith("DMc"):
                         estimator.estimateAll(metric=metric)
                     else:
                         estimator.estimateAll()
-                    estimatedValue = numpy.mean([estimator.estimate(cq, lr, lv, nr) for cq, lr, lv, nr in loggedData])
+                    for cq, lr, lv, nr in loggedData:
+                        estimatedValue = estimator.estimate(cq, lr, lv, nr)
 
-                if args.approach == "CME":
+                if args.approach.startswith("CME"):
+                    estimator.reset()
                     estimatedValue = estimator.estimateAll(loggedData)
                 savePreds[currentSaveIndex] = estimatedValue
                 saveMSEs[currentSaveIndex] = (estimatedValue - target) ** 2

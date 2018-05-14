@@ -11,24 +11,28 @@ import matplotlib.patches as mpatches
 if __name__ == "__main__":
 
     df_res = pd.DataFrame()
-    files = glob.glob(os.path.join(Settings.OUTPUT_DIR, '*.z'))
+    size = 'outputMedium' # output, outputLarge, outputMedium
+    files = glob.glob(os.path.join(os.path.join(Settings.DATA_DIR, size), '*.z'))
     for file in files:
         conditions = file.replace(".z", "").replace("cme_data", "cme").split('_')
-        metric = conditions[1]
-        approach = conditions[9]
-        n_iter = conditions[-1]
-        temp = conditions[5]
         res = joblib.load(file)
         df = pd.DataFrame(np.array(res[:-1]).T, columns=['n_samples', 'MSE', 'Preds'])
-        df['approach'] = approach
-        df['iteration'] = n_iter
-        df['metric'] = metric
-        df['temp'] = temp
+        df['approach'] = conditions[9]
+        df['iteration'] = conditions[-1]
+        df['metric'] = conditions[1]
+        df['temp'] = conditions[5]
+        df['M'] = int(conditions[3])
+        df['L'] = int(conditions[4])
+        df['logger'] = conditions[6]
+        df['ranker'] = conditions[7]
 
         df_res = df_res.append(df)
 
     df_res['n_samples'] = df_res['n_samples'].astype(np.int32)
-    g = sns.FacetGrid(df_res, col="temp", hue="approach", row="metric")
+    df_res['log_rmse'] = np.log10(np.sqrt(df_res['MSE']))
+    df_plot = df_res.query("M == 10 and temp == 'n1.0' and logger == 'flasso' and ranker == 'etree' and approach != 'CME_A'")
+
+    g = sns.FacetGrid(df_plot, col="temp", hue="approach", row="metric")
     g.map(sns.pointplot, "n_samples", "MSE")
     g.set(yscale="log")
 
@@ -38,4 +42,4 @@ if __name__ == "__main__":
 
     g.add_legend(handlers)
 
-    plt.savefig('realdata_result.png')
+    plt.savefig('realdata_result_medium_lasso_tree.png')

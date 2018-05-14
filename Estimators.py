@@ -7,7 +7,7 @@ import sklearn.tree
 import sklearn.linear_model
 from sklearn.metrics.pairwise import rbf_kernel
 from scipy.spatial.distance import pdist
-from sklearn.kernel_approximation import Nystroem
+from sklearn.kernel_approximation import Nystroem, RBFSampler
 
 
 class Estimator:
@@ -58,8 +58,6 @@ class CME(Estimator):
         self.reg_param = 0.001
         self.approx = approx
 
-        self.hyperParams = {'alpha': (numpy.logspace(-2, 1, num=4, base=10)).tolist()}
-
     def estimateAll(self, loggedData):
         numInstances = len(loggedData)
         targets = numpy.zeros(numInstances, order='C', dtype=numpy.float64)
@@ -104,7 +102,7 @@ class CME(Estimator):
         null_covariates = null_covariates.toarray()
         target_covariates = target_covariates.toarray()
 
-        scaler = sklearn.preprocessing.StandardScaler()
+        scaler = sklearn.preprocessing.MinMaxScaler()
         scaler.fit(null_covariates)
 
         s_null_covariates = scaler.transform(null_covariates)
@@ -129,30 +127,35 @@ class CME(Estimator):
         n = target_covariates.shape[0]
         reg_params = self.reg_param / n
 
-        if self.approx:
-            p = int(numpy.sqrt(n))
-            nystroem = Nystroem(gamma=recom_param, n_components=p)
-            nystroem.fit(s_null_covariates)
+        if self.approx and m > 3000:
+            p = 3000
+            rets = []
+            for i in range(10):
+                nystroem = Nystroem(gamma=recom_param, n_components=p)
+                nystroem.fit(s_null_covariates)
 
-            nullPhi = nystroem.transform(s_null_covariates)
-            targetPhi = nystroem.transform(s_target_covariates)
+                nullPhi = nystroem.transform(s_null_covariates)
+                targetPhi = nystroem.transform(s_target_covariates)
 
-            b = numpy.dot(targetPhi.T, numpy.repeat(1.0 / m, m, axis=0))
-            A = nullPhi.T.dot(nullPhi) + numpy.diag(numpy.repeat(p * reg_params, p))
-            beta_vec_approx = nullPhi.dot(scipy.sparse.linalg.cg(A, b, tol=1e-08, maxiter=5000)[0])
+                b = numpy.dot(targetPhi.T, numpy.repeat(1.0 / m, m, axis=0))
+                A = nullPhi.T.dot(nullPhi) + numpy.diag(numpy.repeat(p * reg_params, p))
+                beta_vec_approx = nullPhi.dot(scipy.sparse.linalg.cg(A, b, tol=1e-08, maxiter=5000)[0])
 
-            return numpy.dot(beta_vec_approx, targets) / beta_vec_approx.sum()
+                ret = numpy.dot(beta_vec_approx, targets) / beta_vec_approx.sum()
+                rets.append(ret)
 
-        nullRecomMatrix = self.kernel(s_null_covariates, s_null_covariates, recom_param)
-        targetRecomMatrix = self.kernel(s_null_covariates, s_target_covariates, recom_param)
+            return numpy.mean(rets)
+        else:
+            nullRecomMatrix = self.kernel(s_null_covariates, s_null_covariates, recom_param)
+            targetRecomMatrix = self.kernel(s_null_covariates, s_target_covariates, recom_param)
 
-        b = numpy.dot(targetRecomMatrix, numpy.repeat(1.0 / m, m, axis=0))
-        A = nullRecomMatrix + numpy.diag(numpy.repeat(n * reg_params, n))
+            b = numpy.dot(targetRecomMatrix, numpy.repeat(1.0 / m, m, axis=0))
+            A = nullRecomMatrix + numpy.diag(numpy.repeat(n * reg_params, n))
 
-        print("Finding beta_vec", flush=True)
-        beta_vec, _ = scipy.sparse.linalg.cg(A, b, tol=1e-08, maxiter=5000)
+            print("Finding beta_vec", flush=True)
+            beta_vec, _ = scipy.sparse.linalg.cg(A, b, tol=1e-08, maxiter=5000)
 
-        return numpy.dot(beta_vec, targets) / beta_vec.sum()
+            return numpy.dot(beta_vec, targets) / beta_vec.sum()
 
 
 class OnPolicy(Estimator):
@@ -574,7 +577,7 @@ class Direct(Estimator):
                                                                                              min_samples_leaf=4,
                                                                                              presort=False),
                                                           param_grid=self.treeDepths,
-                                                          scoring=None, fit_params=None, n_jobs=1,
+                                                          scoring=None, fit_params=None, n_jobs=3,
                                                           iid=True, cv=3, refit=True, verbose=0, pre_dispatch=1,
                                                           error_score='raise', return_train_score=False)
             treeCV.fit(covariates, targets)
@@ -590,7 +593,7 @@ class Direct(Estimator):
                                                                                       random_state=None,
                                                                                       selection='random'),
                                                            param_grid=self.hyperParams,
-                                                           scoring=None, fit_params=None, n_jobs=1,
+                                                           scoring=None, fit_params=None, n_jobs=3,
                                                            iid=True, cv=3, refit=True, verbose=0, pre_dispatch=1,
                                                            error_score='raise', return_train_score=False)
             lassoCV.fit(covariates, targets)
@@ -603,7 +606,7 @@ class Direct(Estimator):
                                                                                       solver='sag',
                                                                                       random_state=None),
                                                            param_grid=self.hyperParams,
-                                                           scoring=None, fit_params=None, n_jobs=1,
+                                                           scoring=None, fit_params=None, n_jobs=3,
                                                            iid=True, cv=3, refit=True, verbose=0, pre_dispatch=1,
                                                            error_score='raise', return_train_score=False)
             ridgeCV.fit(covariates, targets)
