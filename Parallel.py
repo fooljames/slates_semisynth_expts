@@ -22,23 +22,23 @@ if __name__ == "__main__":
     parser.add_argument('--temperature', '-t', metavar='T', type=float, help='Temperature for logging policy',
                         default=1.0)  # Use 0 < temperature < 2 to have reasonable tails for logger [-t 2 => smallest prob is 10^-4 (Uniform is 10^-2)]
     parser.add_argument('--logging_ranker', '-f', metavar='F', type=str, help='Model for logging ranker',
-                        default="lasso", choices=["tree", "lasso"])
-    parser.add_argument('--evaluation_ranker', '-e', metavar='E', type=str, help='Model for evaluation ranker',
                         default="tree", choices=["tree", "lasso"])
+    parser.add_argument('--evaluation_ranker', '-e', metavar='E', type=str, help='Model for evaluation ranker',
+                        default="lasso", choices=["tree", "lasso"])
     parser.add_argument('--dataset', '-d', metavar='D', type=str, help='Which dataset to use',
                         default="MSLR", choices=["MSLR", "MSLR10k", "MQ2008", "MQ2007"])
     parser.add_argument('--value_metric', '-v', metavar='V', type=str, help='Which metric to evaluate',
-                        default="ERR", choices=["NDCG", "ERR", "MaxRel", "SumRel"])
+                        default="NDCG", choices=["NDCG", "ERR", "MaxRel", "SumRel"])
     parser.add_argument('--numpy_seed', '-n', metavar='N', type=int,
                         help='Seed for numpy.random', default=387)
     parser.add_argument('--output_dir', '-o', metavar='O', type=str,
                         help='Directory to store pkls', default=Settings.DATA_DIR)
     parser.add_argument('--approach', '-a', metavar='A', type=str,
-                        help='Approach name', default='CME',
+                        help='Approach name', default='DR',
                         choices=["OnPolicy", "IPS", "IPS_SN", "PI", "PI_SN", "DM_tree", "DM_lasso", "DMc_lasso",
-                                 "DM_ridge", "DMc_ridge", "CME", "CME_A"])
+                                 "DM_ridge", "DMc_ridge", "CME", "CME_A", "DR"])
     parser.add_argument('--logSize', '-s', metavar='S', type=int,
-                        help='Size of log', default=10000)
+                        help='Size of log', default=5000)
     parser.add_argument('--trainingSize', '-z', metavar='Z', type=int,
                         help='Size of training data for direct estimators', default=10000)
     parser.add_argument('--saveSize', '-u', metavar='U', type=int,
@@ -86,7 +86,7 @@ if __name__ == "__main__":
     # Setup target policy
     numpy.random.seed(args.numpy_seed)
     targetPolicy = Policy.DeterministicPolicy(data, args.evaluation_ranker)
-    targetPolicy.train(bodyTitleDocFeatures, 'body')
+    targetPolicy.train(anchorURLFeatures, 'url')
     targetPolicy.predictAll(args.length_ranking)
 
     loggingPolicy = None
@@ -95,7 +95,7 @@ if __name__ == "__main__":
 
     else:
         underlyingPolicy = Policy.DeterministicPolicy(data, args.logging_ranker)
-        underlyingPolicy.train(anchorURLFeatures, 'url')
+        underlyingPolicy.train(bodyTitleDocFeatures, 'body')
         loggingPolicy = Policy.NonUniformPolicy(underlyingPolicy, data, args.replacement, args.temperature)
 
     loggingPolicy.setupGamma(args.length_ranking)
@@ -159,6 +159,8 @@ if __name__ == "__main__":
         estimator = Estimators.CME(args.length_ranking, loggingPolicy, targetPolicy)
     elif args.approach == "CME_A":
         estimator = Estimators.CME(args.length_ranking, loggingPolicy, targetPolicy, approx=True)
+    elif args.approach == "DR":
+        estimator = Estimators.DoublyRobust(args.length_ranking, loggingPolicy, targetPolicy, 'tree')
     else:
         print("Parallel:main [ERR] Estimator %s not supported." % args.approach, flush=True)
         sys.exit(0)
@@ -175,7 +177,9 @@ if __name__ == "__main__":
     print("Parallel:main [LOG] *** TARGET: ", target, flush=True)
     del trueMetric
 
-    saveValues = numpy.round(numpy.exp(numpy.linspace(start=numpy.log(1e3), stop=numpy.log(args.logSize), num=args.saveSize))).astype(numpy.int32)
+    saveValues = numpy.round(
+        numpy.exp(numpy.linspace(start=numpy.log(1e3), stop=numpy.log(args.logSize), num=args.saveSize))).astype(
+        numpy.int32)
 
     outputString = args.output_dir + 'ssynth_' + args.value_metric + '_' + args.dataset + '_'
     if args.max_docs is None:
@@ -234,19 +238,19 @@ if __name__ == "__main__":
             #         except AttributeError:
             #             pass
 
-            if not (args.approach.startswith("CME") or args.approach.startswith("DM")):
+            if not (args.approach.startswith("CME") or args.approach.startswith("DM") or args.approach.startswith("DR")):
                 estimatedValue = estimator.estimate(currentQuery, loggedRanking, newRanking, loggedValue)
 
             if j == currentSaveValue:
-                if args.approach.startswith("DM"):
+                if args.approach.startswith("DM") or args.approach.startswith("DR"):
                     estimator.reset()
                     estimator.train(loggedData)
                     if args.approach.startswith("DMc"):
                         estimator.estimateAll(metric=metric)
                     else:
                         estimator.estimateAll()
-                    for cq, lr, lv, nr in loggedData:
-                        estimatedValue = estimator.estimate(cq, lr, lv, nr)
+                    for query, logged_ranking, logged_value, new_ranking in loggedData:
+                        estimatedValue = estimator.estimate(query, logged_ranking, new_ranking, logged_value)
 
                 if args.approach.startswith("CME"):
                     estimator.reset()

@@ -1,6 +1,6 @@
 #!/bin/bash
 
-M=10
+M=100
 L=5
 
 for logger in lasso
@@ -13,7 +13,7 @@ do
             do
                 for approach in OnPolicy
                 do
-                    python3 Parallel.py -m ${M} -l ${L} -v ${metric} -f ${logger} -e ${eval} -t ${temp} -a ${approach} -s 100000 -u 8 --start 0 --stop 10 &> eval.log.${metric}.${M}.${L}.${logger}-${temp}.${eval}.${approach} &
+                    python3 Parallel.py -m ${M} -l ${L} -v ${metric} -f ${logger} -e ${eval} -t ${temp} -a ${approach} -s 100000 -u 6 --start 0 --stop 10 &> eval.log.${metric}.${M}.${L}.${logger}-${temp}.${eval}.${approach} &
                 done
             done
         done

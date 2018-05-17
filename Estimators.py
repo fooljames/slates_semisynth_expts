@@ -56,6 +56,7 @@ class CME(Estimator):
         self.kernel = rbf_kernel
         self.kernel_param = 1.0
         self.reg_param = 0.001
+        self.n_approx = 10
         self.approx = approx
 
     def estimateAll(self, loggedData):
@@ -114,9 +115,9 @@ class CME(Estimator):
         random_indices = numpy.arange(0, s_null_covariates.shape[0])  # array of all indices
         numpy.random.shuffle(random_indices)  # shuffle the array
 
-        sample_null_covar = s_null_covariates[random_indices[:1000]]  # get N samples without replacement
+        sample_null_covar = s_null_covariates[random_indices[:2000]]  # get N samples without replacement
 
-        sample_target_covar = s_target_covariates[random_indices[:1000]]  # get N samples without replacement
+        sample_target_covar = s_target_covariates[random_indices[:2000]]  # get N samples without replacement
 
         recom_param = (0.5 * self.kernel_param) / numpy.median(
             pdist(numpy.vstack([sample_null_covar, sample_target_covar]), 'sqeuclidean'))
@@ -130,7 +131,7 @@ class CME(Estimator):
         if self.approx and m > 3000:
             p = 3000
             rets = []
-            for i in range(10):
+            for i in range(self.n_approx):
                 nystroem = Nystroem(gamma=recom_param, n_components=p)
                 nystroem.fit(s_null_covariates)
 
@@ -651,3 +652,58 @@ class Direct(Estimator):
             self.tree = None
         else:
             self.policyParams = None
+
+
+class DoublyRobust(Direct):
+    def __init__(self, ranking_size, logging_policy, target_policy, estimator_type):
+        super().__init__(ranking_size, logging_policy, target_policy, estimator_type)
+
+    def estimate(self, query, logged_ranking, new_ranking, logged_value):
+        # DirectPrediction
+        targetPred = self.savedValues[query]
+
+        nullFeatures = self.loggingPolicy.dataset.features[query][logged_ranking, :]
+
+        if new_ranking.size < self.rankingSize:
+            emptyPad = scipy.sparse.csr_matrix((self.rankingSize - new_ranking.size, self.numFeatures),
+                                               dtype=numpy.float64)
+            nullFeatures = scipy.sparse.vstack((nullFeatures, emptyPad), format="csr", dtype=numpy.float64)
+
+        nullFeatures = nullFeatures.toarray()
+        nRows, nCols = nullFeatures.shape
+        size = nRows * nCols
+        currentFeatures = numpy.reshape(nullFeatures, (1, size))
+
+        if self.estimatorType == 'tree':
+            nullPred = self.tree.predict(currentFeatures)[0]
+        else:
+            nullPred = numpy.dot(currentFeatures, self.policyParams)[0]
+
+        del nullFeatures
+        del currentFeatures
+
+        # IPS Prediction
+        exactMatch = numpy.absolute(new_ranking - logged_ranking).sum() == 0
+
+        ipsPred = 0.0
+        if exactMatch:
+            numAllowedDocs = self.loggingPolicy.dataset.docsPerQuery[query]
+            underlyingRanking = self.loggingPolicy.policy.predict(query, -1)
+            currentDistribution = self.loggingPolicy.multinomials[numAllowedDocs]
+
+            numRankedDocs = logged_ranking.size
+            invPropensity = 1.0
+            denominator = 1.0
+            for j in range(numRankedDocs):
+                underlyingIndex = numpy.flatnonzero(underlyingRanking == logged_ranking[j])[0]
+                invPropensity *= (denominator * 1.0 / currentDistribution[underlyingIndex])
+                if not self.loggingPolicy.allowRepetitions:
+                    denominator -= currentDistribution[underlyingIndex]
+
+            print(invPropensity)
+
+            ipsPred = (logged_value - nullPred) * invPropensity
+
+        self.updateRunningAverage(targetPred + ipsPred)
+
+        return self.runningMean

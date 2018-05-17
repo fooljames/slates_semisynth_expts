@@ -23,6 +23,7 @@ if __name__ == "__main__":
         df['temp'] = conditions[5]
         df['M'] = int(conditions[3])
         df['L'] = int(conditions[4])
+        df['M-L'] = conditions[3] + '-' + conditions[4]
         df['logger'] = conditions[6]
         df['ranker'] = conditions[7]
 
@@ -30,16 +31,21 @@ if __name__ == "__main__":
 
     df_res['n_samples'] = df_res['n_samples'].astype(np.int32)
     df_res['log_rmse'] = np.log10(np.sqrt(df_res['MSE']))
-    df_plot = df_res.query("M == 10 and temp == 'n1.0' and logger == 'flasso' and ranker == 'etree' and approach != 'CME_A'")
 
-    g = sns.FacetGrid(df_plot, col="temp", hue="approach", row="metric")
+    df_plot = df_res.query("temp == 'n1.0' and logger == 'ftree' and ranker == 'elasso' and approach != 'CME'")
+
+    g = sns.FacetGrid(df_plot, hue="approach",
+                      col="M-L", row="metric",
+                      size=3, aspect=1.5)
     g.map(sns.pointplot, "n_samples", "MSE")
     g.set(yscale="log")
+    plt.subplots_adjust(top=0.9)
+    g.fig.suptitle("Null - Lasso(Url), Target - Tree(Body)", size=13)
 
     handlers = dict()
     for hue, color in zip(g.hue_names, g._colors):
         handlers[hue] = mpatches.Patch(color=color)
 
-    g.add_legend(handlers)
+    g.add_legend(handlers, title='Estimator')
 
-    plt.savefig('realdata_result_medium_lasso_tree.png')
+    plt.savefig('realdata_result_medium_ftree_elasso.png')
