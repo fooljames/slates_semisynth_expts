@@ -56,7 +56,8 @@ class CME(Estimator):
         self.kernel = rbf_kernel
         self.kernel_param = 1.0
         self.reg_param = 0.001
-        self.n_approx = 10
+        self.n_approx = 1
+        self.p = 5000
         self.approx = approx
 
     def estimateAll(self, loggedData):
@@ -128,8 +129,8 @@ class CME(Estimator):
         n = target_covariates.shape[0]
         reg_params = self.reg_param / n
 
-        if self.approx and m > 3000:
-            p = 3000
+        if self.approx and m > self.p:
+            p = self.p
             rets = []
             for i in range(self.n_approx):
                 nystroem = Nystroem(gamma=recom_param, n_components=p)
@@ -285,37 +286,73 @@ class UniformSNIPS(Estimator):
 
 
 class NonUniformSNIPS(Estimator):
-    def __init__(self, ranking_size, logging_policy, target_policy):
+    def __init__(self, ranking_size, logging_policy, target_policy, deterministic=True):
         Estimator.__init__(self, ranking_size, logging_policy, target_policy)
         self.name = 'NonUnif-IPS_SN'
         self.runningDenominatorMean = 0.0
+        self.deterministic = deterministic
 
     def estimate(self, query, logged_ranking, new_ranking, logged_value):
-        exactMatch = numpy.absolute(new_ranking - logged_ranking).sum() == 0
-        currentValue = 0.0
-        if exactMatch:
+
+        if self.deterministic:
+            exactMatch = numpy.absolute(new_ranking - logged_ranking).sum() == 0
+            currentValue = 0.0
+            if exactMatch:
+                numAllowedDocs = self.loggingPolicy.dataset.docsPerQuery[query]
+                underlyingRanking = self.loggingPolicy.policy.predict(query, -1)
+                currentDistribution = self.loggingPolicy.multinomials[numAllowedDocs]
+
+                numRankedDocs = logged_ranking.size
+                invPropensity = 1.0
+                denominator = 1.0
+                for j in range(numRankedDocs):
+                    underlyingIndex = numpy.flatnonzero(underlyingRanking == logged_ranking[j])[0]
+                    invPropensity *= (denominator * 1.0 / currentDistribution[underlyingIndex])
+                    if not self.loggingPolicy.allowRepetitions:
+                        denominator -= currentDistribution[underlyingIndex]
+
+                currentValue = logged_value * invPropensity
+
+                self.updateRunningAverage(currentValue)
+                denominatorDelta = invPropensity - self.runningDenominatorMean
+                self.runningDenominatorMean += denominatorDelta / self.runningSum
+            if self.runningDenominatorMean != 0.0:
+                return 1.0 * self.runningMean / self.runningDenominatorMean
+            else:
+                return 0.0
+        else:
             numAllowedDocs = self.loggingPolicy.dataset.docsPerQuery[query]
             underlyingRanking = self.loggingPolicy.policy.predict(query, -1)
             currentDistribution = self.loggingPolicy.multinomials[numAllowedDocs]
 
+            underlyingRankingTarget = self.targetPolicy.policy.predict(query, -1)
+            currentDistributionTarget = self.targetPolicy.multinomials[numAllowedDocs]
+
             numRankedDocs = logged_ranking.size
-            invPropensity = 1.0
-            denominator = 1.0
+            nullPropensity = 1.0
+            nullDenominator = 1.0
+
+            targetPropensity = 1.0
+            targetDenominator = 1.0
             for j in range(numRankedDocs):
                 underlyingIndex = numpy.flatnonzero(underlyingRanking == logged_ranking[j])[0]
-                invPropensity *= (denominator * 1.0 / currentDistribution[underlyingIndex])
+                underlyingIndexTarget = numpy.flatnonzero(underlyingRankingTarget == logged_ranking[j])[0]
+                nullPropensity *= (currentDistribution[underlyingIndex] / nullDenominator)
+                targetPropensity *= (currentDistributionTarget[underlyingIndexTarget] / targetDenominator)
                 if not self.loggingPolicy.allowRepetitions:
-                    denominator -= currentDistribution[underlyingIndex]
+                    nullDenominator -= currentDistribution[underlyingIndex]
+                    targetDenominator -= currentDistributionTarget[underlyingIndexTarget]
 
-            currentValue = logged_value * invPropensity
+            currentValue = logged_value * targetPropensity / nullPropensity
 
             self.updateRunningAverage(currentValue)
-            denominatorDelta = invPropensity - self.runningDenominatorMean
+            denominatorDelta = targetPropensity / nullPropensity - self.runningDenominatorMean
             self.runningDenominatorMean += denominatorDelta / self.runningSum
-        if self.runningDenominatorMean != 0.0:
-            return 1.0 * self.runningMean / self.runningDenominatorMean
-        else:
-            return 0.0
+
+            if self.runningDenominatorMean != 0.0:
+                return 1.0 * self.runningMean / self.runningDenominatorMean
+            else:
+                return 0.0
 
     def reset(self):
         Estimator.reset(self)
@@ -655,8 +692,9 @@ class Direct(Estimator):
 
 
 class DoublyRobust(Direct):
-    def __init__(self, ranking_size, logging_policy, target_policy, estimator_type):
+    def __init__(self, ranking_size, logging_policy, target_policy, estimator_type, deterministic=True):
         super().__init__(ranking_size, logging_policy, target_policy, estimator_type)
+        self.deterministic = deterministic
 
     def estimate(self, query, logged_ranking, new_ranking, logged_value):
         # DirectPrediction
@@ -682,27 +720,50 @@ class DoublyRobust(Direct):
         del nullFeatures
         del currentFeatures
 
-        # IPS Prediction
-        exactMatch = numpy.absolute(new_ranking - logged_ranking).sum() == 0
+        if self.deterministic:
+            exactMatch = numpy.absolute(new_ranking - logged_ranking).sum() == 0
 
-        ipsPred = 0.0
-        if exactMatch:
+            ipsPred = 0.0
+            if exactMatch:
+                numAllowedDocs = self.loggingPolicy.dataset.docsPerQuery[query]
+                underlyingRanking = self.loggingPolicy.policy.predict(query, -1)
+                currentDistribution = self.loggingPolicy.multinomials[numAllowedDocs]
+
+                numRankedDocs = logged_ranking.size
+                invPropensity = 1.0
+                denominator = 1.0
+                for j in range(numRankedDocs):
+                    underlyingIndex = numpy.flatnonzero(underlyingRanking == logged_ranking[j])[0]
+                    invPropensity *= (denominator * 1.0 / currentDistribution[underlyingIndex])
+                    if not self.loggingPolicy.allowRepetitions:
+                        denominator -= currentDistribution[underlyingIndex]
+
+                ipsPred = (logged_value - nullPred) * invPropensity
+        else:
+            # IPS Prediction
             numAllowedDocs = self.loggingPolicy.dataset.docsPerQuery[query]
             underlyingRanking = self.loggingPolicy.policy.predict(query, -1)
             currentDistribution = self.loggingPolicy.multinomials[numAllowedDocs]
 
+            underlyingRankingTarget = self.targetPolicy.policy.predict(query, -1)
+            currentDistributionTarget = self.targetPolicy.multinomials[numAllowedDocs]
+
             numRankedDocs = logged_ranking.size
-            invPropensity = 1.0
-            denominator = 1.0
+            nullPropensity = 1.0
+            nullDenominator = 1.0
+
+            targetPropensity = 1.0
+            targetDenominator = 1.0
             for j in range(numRankedDocs):
                 underlyingIndex = numpy.flatnonzero(underlyingRanking == logged_ranking[j])[0]
-                invPropensity *= (denominator * 1.0 / currentDistribution[underlyingIndex])
+                underlyingIndexTarget = numpy.flatnonzero(underlyingRankingTarget == logged_ranking[j])[0]
+                nullPropensity *= (currentDistribution[underlyingIndex] / nullDenominator)
+                targetPropensity *= (currentDistributionTarget[underlyingIndexTarget] / targetDenominator)
                 if not self.loggingPolicy.allowRepetitions:
-                    denominator -= currentDistribution[underlyingIndex]
+                    nullDenominator -= currentDistribution[underlyingIndex]
+                    targetDenominator -= currentDistributionTarget[underlyingIndexTarget]
 
-            print(invPropensity)
-
-            ipsPred = (logged_value - nullPred) * invPropensity
+            ipsPred = (logged_value - nullPred) * targetPropensity / nullPropensity
 
         self.updateRunningAverage(targetPred + ipsPred)
 

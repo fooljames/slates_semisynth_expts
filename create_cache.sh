@@ -1,15 +1,15 @@
 #!/bin/bash
 
 M=100
-L=5
+L=10
 
-for logger in lasso
+for logger in tree
 do
     for metric in NDCG
     do
         for temp in 1.0
         do
-            for eval in tree
+            for eval in lasso
             do
                 for approach in OnPolicy
                 do

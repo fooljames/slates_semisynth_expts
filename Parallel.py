@@ -24,7 +24,10 @@ if __name__ == "__main__":
     parser.add_argument('--logging_ranker', '-f', metavar='F', type=str, help='Model for logging ranker',
                         default="tree", choices=["tree", "lasso"])
     parser.add_argument('--evaluation_ranker', '-e', metavar='E', type=str, help='Model for evaluation ranker',
-                        default="lasso", choices=["tree", "lasso"])
+                        default="tree", choices=["tree", "lasso"])
+    parser.add_argument('--deterministic', '-fd', metavar='FD', type=bool,
+                        help='evaluation ranker deterministic or not',
+                        default=True, choices=[True, False])
     parser.add_argument('--dataset', '-d', metavar='D', type=str, help='Which dataset to use',
                         default="MSLR", choices=["MSLR", "MSLR10k", "MQ2008", "MQ2007"])
     parser.add_argument('--value_metric', '-v', metavar='V', type=str, help='Which metric to evaluate',
@@ -34,7 +37,7 @@ if __name__ == "__main__":
     parser.add_argument('--output_dir', '-o', metavar='O', type=str,
                         help='Directory to store pkls', default=Settings.DATA_DIR)
     parser.add_argument('--approach', '-a', metavar='A', type=str,
-                        help='Approach name', default='DR',
+                        help='Approach name', default='IPS_SN',
                         choices=["OnPolicy", "IPS", "IPS_SN", "PI", "PI_SN", "DM_tree", "DM_lasso", "DMc_lasso",
                                  "DM_ridge", "DMc_ridge", "CME", "CME_A", "DR"])
     parser.add_argument('--logSize', '-s', metavar='S', type=int,
@@ -77,7 +80,7 @@ if __name__ == "__main__":
     if args.max_docs >= 1:
         numpy.random.seed(args.numpy_seed)
         detLogger = Policy.DeterministicPolicy(data, 'tree')
-        detLogger.train(anchorURLFeatures, 'url')
+        detLogger.train(bodyTitleDocFeatures, 'body')
 
         detLogger.filterDataset(args.max_docs)
         data = detLogger.dataset
@@ -87,7 +90,10 @@ if __name__ == "__main__":
     numpy.random.seed(args.numpy_seed)
     targetPolicy = Policy.DeterministicPolicy(data, args.evaluation_ranker)
     targetPolicy.train(anchorURLFeatures, 'url')
-    targetPolicy.predictAll(args.length_ranking)
+    if args.deterministic:
+        targetPolicy.predictAll(args.length_ranking)
+    else:
+        targetPolicy = Policy.NonUniformPolicy(targetPolicy, data, args.replacement, args.temperature * 2)
 
     loggingPolicy = None
     if args.temperature <= 0.0:
@@ -97,7 +103,8 @@ if __name__ == "__main__":
         underlyingPolicy = Policy.DeterministicPolicy(data, args.logging_ranker)
         underlyingPolicy.train(bodyTitleDocFeatures, 'body')
         loggingPolicy = Policy.NonUniformPolicy(underlyingPolicy, data, args.replacement, args.temperature)
-
+    if not args.deterministic:
+        targetPolicy.setupGamma(args.length_ranking)
     loggingPolicy.setupGamma(args.length_ranking)
 
     smallestProb = 1.0
@@ -139,7 +146,7 @@ if __name__ == "__main__":
             estimator = Estimators.UniformIPS(args.length_ranking, loggingPolicy, targetPolicy)
     elif args.approach == "IPS_SN":
         if args.temperature > 0.0:
-            estimator = Estimators.NonUniformSNIPS(args.length_ranking, loggingPolicy, targetPolicy)
+            estimator = Estimators.NonUniformSNIPS(args.length_ranking, loggingPolicy, targetPolicy, args.deterministic)
         else:
             estimator = Estimators.UniformSNIPS(args.length_ranking, loggingPolicy, targetPolicy)
     elif args.approach == "PI":
@@ -160,15 +167,19 @@ if __name__ == "__main__":
     elif args.approach == "CME_A":
         estimator = Estimators.CME(args.length_ranking, loggingPolicy, targetPolicy, approx=True)
     elif args.approach == "DR":
-        estimator = Estimators.DoublyRobust(args.length_ranking, loggingPolicy, targetPolicy, 'tree')
+        estimator = Estimators.DoublyRobust(args.length_ranking, loggingPolicy, targetPolicy, 'tree',
+                                            args.deterministic)
     else:
         print("Parallel:main [ERR] Estimator %s not supported." % args.approach, flush=True)
         sys.exit(0)
 
     numQueries = len(data.docsPerQuery)
     trueMetric = numpy.zeros(numQueries, dtype=numpy.float64)
+    monte_carlo_k = 100
     for i in range(numQueries):
-        trueMetric[i] = metric.computeMetric(i, targetPolicy.predict(i, args.length_ranking))
+        for _ in range(monte_carlo_k):
+            trueMetric[i] += metric.computeMetric(i, targetPolicy.predict(i, args.length_ranking))
+        trueMetric[i] = trueMetric[i] / monte_carlo_k
         if i % 100 == 0:
             print(".", end="", flush=True)
     print("", flush=True)
@@ -193,7 +204,8 @@ if __name__ == "__main__":
     else:
         outputString += 'n'
     outputString += str(float(args.temperature)) + '_'
-    outputString += 'f' + args.logging_ranker + '_e' + args.evaluation_ranker + '_' + str(args.numpy_seed)
+    outputString += 'f' + args.logging_ranker + '_e' + args.evaluation_ranker + '-d' + str(
+        args.deterministic) + '_' + str(args.numpy_seed)
     outputString += '_' + args.approach.replace("_", "-")
     # if args.approach.startswith("DM"):
     #     outputString += '_' + str(args.trainingSize)
@@ -238,7 +250,8 @@ if __name__ == "__main__":
             #         except AttributeError:
             #             pass
 
-            if not (args.approach.startswith("CME") or args.approach.startswith("DM") or args.approach.startswith("DR")):
+            if not (args.approach.startswith("CME") or args.approach.startswith("DM") or args.approach.startswith(
+                    "DR")):
                 estimatedValue = estimator.estimate(currentQuery, loggedRanking, newRanking, loggedValue)
 
             if j == currentSaveValue:
